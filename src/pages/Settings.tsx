@@ -1,25 +1,30 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { useStore } from '../store/useStore';
 import { useForm } from 'react-hook-form';
-import { Save, Building2, Calendar } from 'lucide-react';
+import { Save, Building2, Calendar, Mail, Plus, Trash2 } from 'lucide-react';
+import { generateId } from '../lib/utils';
 
 export const Settings = () => {
-  const { pricing, invoiceSettings, updatePricing, updateInvoiceSettings } = useStore();
+  const { tankerSizes, invoiceSettings, addTankerSize, deleteTankerSize, updateInvoiceSettings } = useStore();
   
-  const { register: registerPrice, handleSubmit: handleSubmitPrice, formState: { isDirty: isPriceDirty } } = useForm({
-    defaultValues: pricing
-  });
+  const [newSizeName, setNewSizeName] = useState('');
+  const [newSizePrice, setNewSizePrice] = useState('');
 
   const { register: registerInv, handleSubmit: handleSubmitInv, formState: { isDirty: isInvDirty } } = useForm({
     defaultValues: invoiceSettings
   });
 
-  const onPriceSubmit = (data: any) => {
-    updatePricing({
-      '5000L': Number(data['5000L']),
-      '30000L': Number(data['30000L'])
+  const handleAddTankerSize = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newSizeName || !newSizePrice) return;
+    
+    addTankerSize({
+      id: generateId(),
+      name: newSizeName,
+      price: Number(newSizePrice)
     });
-    alert("Pricing updated successfully!");
+    setNewSizeName('');
+    setNewSizePrice('');
   };
 
   const onInvSubmit = (data: any) => {
@@ -38,27 +43,62 @@ export const Settings = () => {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-        {/* Pricing Settings */}
+        {/* Dynamic Pricing Settings */}
         <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200 h-fit">
           <h3 className="font-bold text-gray-800 mb-4 border-b pb-2 flex items-center gap-2">
-            <Building2 className="w-4 h-4" /> Tanker Pricing
+            <Building2 className="w-4 h-4" /> Global Tanker Pricing
           </h3>
-          <form onSubmit={handleSubmitPrice(onPriceSubmit)} className="space-y-6">
-            <div className="grid grid-cols-1 gap-4">
+          <p className="text-xs text-gray-500 mb-4">
+            Add or remove tanker sizes (e.g., 500L, 30000L) and set their default prices. You can override these for specific clients.
+          </p>
+          
+          <div className="space-y-3 mb-6">
+            {tankerSizes.map(size => (
+              <div key={size.id} className="flex items-center justify-between bg-gray-50 p-3 rounded-lg border border-gray-200">
+                <div>
+                  <span className="font-semibold text-gray-800">{size.name}</span>
+                  <span className="text-sm text-gray-500 ml-2">Rs. {size.price}</span>
+                </div>
+                {tankerSizes.length > 1 && (
+                  <button 
+                    onClick={() => deleteTankerSize(size.id)}
+                    className="text-gray-400 hover:text-red-500 transition-colors"
+                    title="Delete Tanker Size"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+
+          <form onSubmit={handleAddTankerSize} className="bg-blue-50 p-4 rounded-lg border border-blue-100">
+            <h4 className="text-sm font-semibold text-blue-800 mb-3">Add New Tanker Size</h4>
+            <div className="grid grid-cols-2 gap-3 mb-3">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">5000 Liters Price (₹)</label>
-                <input type="number" {...registerPrice('5000L')} className="w-full p-2 border rounded-lg" />
+                <label className="block text-xs font-medium text-gray-700 mb-1">Size Name (e.g. 500L)</label>
+                <input 
+                  type="text" 
+                  value={newSizeName}
+                  onChange={(e) => setNewSizeName(e.target.value)}
+                  className="w-full p-2 border rounded-lg text-sm" 
+                  placeholder="500L"
+                />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">30,000 Liters Price (₹)</label>
-                <input type="number" {...registerPrice('30000L')} className="w-full p-2 border rounded-lg" />
+                <label className="block text-xs font-medium text-gray-700 mb-1">Default Price (Rs.)</label>
+                <input 
+                  type="number" 
+                  value={newSizePrice}
+                  onChange={(e) => setNewSizePrice(e.target.value)}
+                  className="w-full p-2 border rounded-lg text-sm" 
+                  placeholder="400"
+                />
               </div>
             </div>
-            <div className="flex justify-end">
-              <button type="submit" disabled={!isPriceDirty} className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50">
-                Save Prices
-              </button>
-            </div>
+            <button type="submit" disabled={!newSizeName || !newSizePrice} className="w-full py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 text-sm font-medium flex items-center justify-center gap-2">
+              <Plus className="w-4 h-4" /> Add Size
+            </button>
           </form>
         </div>
 
@@ -93,12 +133,22 @@ export const Settings = () => {
               <input {...registerInv('footerNote')} className="w-full p-2 border rounded-lg" />
             </div>
 
-            <div className="bg-blue-50 p-4 rounded-lg border border-blue-100 space-y-3">
-              <h4 className="font-semibold text-blue-800 text-sm">Automation Settings</h4>
-              <div className="flex items-center gap-2">
+            <div className="bg-blue-50 p-4 rounded-lg border border-blue-100 space-y-4">
+              <h4 className="font-semibold text-blue-800 text-sm flex items-center gap-2">
+                <Mail className="w-4 h-4" /> Email & Automation Settings
+              </h4>
+              
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Default CC Emails</label>
+                <input {...registerInv('ccEmails')} placeholder="admin@example.com, boss@example.com" className="w-full p-2 border rounded-lg text-sm" />
+                <p className="text-xs text-gray-500 mt-1">Comma separated emails to automatically CC when sending invoices.</p>
+              </div>
+
+              <div className="flex items-center gap-2 pt-2">
                 <input type="checkbox" {...registerInv('autoEmail')} id="autoEmail" className="rounded text-blue-600" />
                 <label htmlFor="autoEmail" className="text-sm text-gray-700">Enable Auto-Email Simulation</label>
               </div>
+              
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Generate on Day of Month</label>
                 <select {...registerInv('invoiceDay')} className="w-full p-2 border rounded-lg bg-white">

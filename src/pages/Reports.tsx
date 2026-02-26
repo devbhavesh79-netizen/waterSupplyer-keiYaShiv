@@ -1,17 +1,22 @@
 import React, { useState } from 'react';
 import { useStore } from '../store/useStore';
 import { formatCurrency } from '../lib/utils';
-import { FileDown, Send, MessageCircle, Mail, FileText } from 'lucide-react';
-import { format, isSameDay, parseISO, startOfMonth, endOfMonth, isWithinInterval } from 'date-fns';
+import { FileDown, Send, MessageCircle, Mail, FileText, Calendar } from 'lucide-react';
+import { format, isSameDay, parseISO, isWithinInterval, startOfDay, endOfDay } from 'date-fns';
 import * as XLSX from 'xlsx';
 import { generateInvoicePDF } from '../lib/pdfGenerator';
 
 export const Reports = () => {
   const { clients, drivers, entries, invoiceSettings } = useStore();
+  
+  // Daily Report State
   const [reportDate, setReportDate] = useState(new Date().toISOString().split('T')[0]);
-  const [invoiceMonth, setInvoiceMonth] = useState(new Date().toISOString().slice(0, 7)); // YYYY-MM
+  
+  // Custom Range Invoice State
+  const [invoiceFromDate, setInvoiceFromDate] = useState(new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0]);
+  const [invoiceToDate, setInvoiceToDate] = useState(new Date().toISOString().split('T')[0]);
 
-  // Daily Report Logic (Existing)
+  // Daily Report Logic
   const dailyEntries = entries.filter(e => isSameDay(parseISO(e.date), parseISO(reportDate)));
   
   const generateDailySummary = () => {
@@ -44,20 +49,25 @@ export const Reports = () => {
     window.open(`mailto:?subject=${subject}&body=${body}`, '_blank');
   };
 
-  // Monthly Invoice Logic (Enhanced)
-  const getClientMonthData = (clientId: string) => {
-    const start = startOfMonth(new Date(invoiceMonth));
-    const end = endOfMonth(new Date(invoiceMonth));
+  // Custom Range Invoice Logic
+  const getClientRangeData = (clientId: string) => {
+    const start = startOfDay(parseISO(invoiceFromDate));
+    const end = endOfDay(parseISO(invoiceToDate));
+    
     return entries.filter(e => 
       e.clientId === clientId && 
       isWithinInterval(parseISO(e.date), { start, end })
     ).sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
   };
 
+  const getPeriodLabel = () => {
+    return `${format(parseISO(invoiceFromDate), 'dd MMM')} to ${format(parseISO(invoiceToDate), 'dd MMM yyyy')}`;
+  };
+
   const handleExportExcel = (clientId: string) => {
     const client = clients.find(c => c.id === clientId);
     if (!client) return;
-    const clientEntries = getClientMonthData(clientId);
+    const clientEntries = getClientRangeData(clientId);
 
     const data = clientEntries.map(e => ({
       Date: format(parseISO(e.date), 'dd-MM-yyyy'),
@@ -73,25 +83,25 @@ export const Reports = () => {
     const ws = XLSX.utils.json_to_sheet(data);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Invoice");
-    XLSX.writeFile(wb, `Invoice_${client.name}_${invoiceMonth}.xlsx`);
+    XLSX.writeFile(wb, `Invoice_${client.name}_${invoiceFromDate}_to_${invoiceToDate}.xlsx`);
   };
 
   const handleExportPDF = (clientId: string) => {
     const client = clients.find(c => c.id === clientId);
     if (!client) return;
-    const clientEntries = getClientMonthData(clientId);
-    const monthName = format(new Date(invoiceMonth), 'MMMM yyyy');
-
-    const doc = generateInvoicePDF(client, clientEntries, invoiceSettings, monthName, drivers);
-    doc.save(`Invoice_${client.name}_${invoiceMonth}.pdf`);
+    const clientEntries = getClientRangeData(clientId);
+    
+    const doc = generateInvoicePDF(client, clientEntries, invoiceSettings, getPeriodLabel(), drivers);
+    doc.save(`Invoice_${client.name}_${invoiceFromDate}_to_${invoiceToDate}.pdf`);
   };
 
   const handleSimulateEmail = (clientId: string) => {
     const client = clients.find(c => c.id === clientId);
     if(!client) return;
-    const subject = encodeURIComponent(`Invoice for ${format(new Date(invoiceMonth), 'MMMM yyyy')}`);
-    const body = encodeURIComponent(`Dear ${client.name},\n\nPlease find attached the invoice for ${format(new Date(invoiceMonth), 'MMMM yyyy')}.\n\nRegards,\n${invoiceSettings.companyName}`);
-    window.open(`mailto:${client.email}?subject=${subject}&body=${body}`, '_blank');
+    const subject = encodeURIComponent(`Invoice for period ${getPeriodLabel()}`);
+    const body = encodeURIComponent(`Dear ${client.name},\n\nPlease find attached the invoice for the period ${getPeriodLabel()}.\n\nRegards,\n${invoiceSettings.companyName}`);
+    const cc = invoiceSettings.ccEmails ? `&cc=${encodeURIComponent(invoiceSettings.ccEmails)}` : '';
+    window.open(`mailto:${client.email}?subject=${subject}&body=${body}${cc}`, '_blank');
   };
 
   return (
@@ -123,19 +133,33 @@ export const Reports = () => {
         </div>
       </section>
 
-      {/* Monthly Invoice Section */}
+      {/* Custom Range Invoice Section */}
       <section className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
         <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
           <div>
-            <h2 className="text-xl font-bold text-gray-800">Monthly Invoices</h2>
-            <p className="text-gray-500 text-sm">Generate PDF/Excel invoices for clients.</p>
+            <h2 className="text-xl font-bold text-gray-800">Custom Invoices</h2>
+            <p className="text-gray-500 text-sm">Generate PDF/Excel invoices for any specific date range.</p>
           </div>
-          <input 
-             type="month" 
-             value={invoiceMonth} 
-             onChange={(e) => setInvoiceMonth(e.target.value)} 
-             className="border rounded-lg p-2 text-sm"
-          />
+          <div className="flex items-center gap-3 bg-gray-50 p-2 rounded-lg border border-gray-200">
+             <Calendar className="w-5 h-5 text-gray-400" />
+             <div className="flex items-center gap-2">
+               <input 
+                 type="date" 
+                 value={invoiceFromDate} 
+                 onChange={(e) => setInvoiceFromDate(e.target.value)} 
+                 className="border rounded p-1.5 text-sm"
+                 title="From Date"
+               />
+               <span className="text-gray-400 text-sm">to</span>
+               <input 
+                 type="date" 
+                 value={invoiceToDate} 
+                 onChange={(e) => setInvoiceToDate(e.target.value)} 
+                 className="border rounded p-1.5 text-sm"
+                 title="To Date"
+               />
+             </div>
+          </div>
         </div>
 
         <div className="overflow-x-auto">
@@ -150,7 +174,7 @@ export const Reports = () => {
             </thead>
             <tbody className="divide-y divide-gray-100">
               {clients.map(client => {
-                const clientEntries = getClientMonthData(client.id);
+                const clientEntries = getClientRangeData(client.id);
                 if (clientEntries.length === 0) return null;
                 const totalAmount = clientEntries.reduce((sum, e) => sum + e.price, 0);
 
@@ -185,8 +209,8 @@ export const Reports = () => {
                   </tr>
                 );
               })}
-              {clients.every(c => getClientMonthData(c.id).length === 0) && (
-                 <tr><td colSpan={4} className="px-6 py-8 text-center text-gray-500">No data available for this month.</td></tr>
+              {clients.every(c => getClientRangeData(c.id).length === 0) && (
+                 <tr><td colSpan={4} className="px-6 py-8 text-center text-gray-500">No data available for this date range.</td></tr>
               )}
             </tbody>
           </table>

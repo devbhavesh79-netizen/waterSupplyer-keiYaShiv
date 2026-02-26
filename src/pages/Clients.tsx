@@ -1,11 +1,10 @@
 import React, { useState } from 'react';
 import { useStore } from '../store/useStore';
 import { generateId } from '../lib/utils';
-import { Plus, Trash2, Edit2, User, Phone, MapPin, Mail, Clock } from 'lucide-react';
+import { Plus, Trash2, Edit2, User, Phone, MapPin, Mail, Clock, IndianRupee } from 'lucide-react';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { InvoiceFrequency } from '../types';
 
 const clientSchema = z.object({
   name: z.string().min(1, 'Name is required'),
@@ -13,6 +12,7 @@ const clientSchema = z.object({
   email: z.string().email().optional().or(z.literal('')),
   address: z.string().optional(),
   invoiceFrequency: z.enum(['Monthly', '15-Days', 'Weekly']),
+  customPricing: z.record(z.any()).optional()
 });
 
 const driverSchema = z.object({
@@ -24,14 +24,16 @@ type ClientForm = z.infer<typeof clientSchema>;
 type DriverForm = z.infer<typeof driverSchema>;
 
 export const Clients = () => {
-  const { clients, drivers, addClient, deleteClient, addDriver, deleteDriver } = useStore();
+  const { clients, drivers, tankerSizes, addClient, updateClient, deleteClient, addDriver, deleteDriver } = useStore();
   const [isClientModalOpen, setIsClientModalOpen] = useState(false);
+  const [editingClientId, setEditingClientId] = useState<string | null>(null);
   const [isDriverModalOpen, setIsDriverModalOpen] = useState(false);
 
   const { register: registerClient, handleSubmit: handleSubmitClient, reset: resetClient, formState: { errors: clientErrors } } = useForm<ClientForm>({
     resolver: zodResolver(clientSchema),
     defaultValues: {
-      invoiceFrequency: 'Monthly'
+      invoiceFrequency: 'Monthly',
+      customPricing: {}
     }
   });
 
@@ -39,15 +41,57 @@ export const Clients = () => {
     resolver: zodResolver(driverSchema)
   });
 
-  const onClientSubmit = (data: ClientForm) => {
-    addClient({
-      id: generateId(),
-      ...data,
-      email: data.email || '',
-      address: data.address || ''
+  const openAddClientModal = () => {
+    setEditingClientId(null);
+    resetClient({
+      name: '', contact: '', email: '', address: '', invoiceFrequency: 'Monthly', customPricing: {}
     });
+    setIsClientModalOpen(true);
+  };
+
+  const openEditClientModal = (client: any) => {
+    setEditingClientId(client.id);
+    resetClient({
+      name: client.name,
+      contact: client.contact,
+      email: client.email || '',
+      address: client.address || '',
+      invoiceFrequency: client.invoiceFrequency,
+      customPricing: client.customPricing || {},
+    });
+    setIsClientModalOpen(true);
+  };
+
+  const onClientSubmit = (data: ClientForm) => {
+    // Clean up empty custom pricing fields
+    const cleanedPricing: Record<string, number> = {};
+    if (data.customPricing) {
+      Object.entries(data.customPricing).forEach(([key, val]) => {
+        if (val !== '' && val !== null && val !== undefined) {
+          cleanedPricing[key] = Number(val);
+        }
+      });
+    }
+
+    if (editingClientId) {
+      updateClient(editingClientId, {
+        ...data,
+        email: data.email || '',
+        address: data.address || '',
+        customPricing: Object.keys(cleanedPricing).length > 0 ? cleanedPricing : undefined
+      });
+    } else {
+      addClient({
+        id: generateId(),
+        ...data,
+        email: data.email || '',
+        address: data.address || '',
+        customPricing: Object.keys(cleanedPricing).length > 0 ? cleanedPricing : undefined
+      });
+    }
     resetClient();
     setIsClientModalOpen(false);
+    setEditingClientId(null);
   };
 
   const onDriverSubmit = (data: DriverForm) => {
@@ -61,21 +105,21 @@ export const Clients = () => {
 
   return (
     <div className="space-y-6">
-      <div className="flex justify-between items-center">
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>
           <h2 className="text-2xl font-bold text-gray-800">Clients & Drivers</h2>
-          <p className="text-gray-500">Manage your customer base and their drivers.</p>
+          <p className="text-gray-500">Manage your customer base, pricing, and their drivers.</p>
         </div>
-        <div className="flex gap-3">
+        <div className="flex flex-wrap gap-3 w-full md:w-auto">
           <button 
             onClick={() => setIsDriverModalOpen(true)}
-            className="px-4 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 flex items-center gap-2"
+            className="flex-1 md:flex-none px-4 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 flex items-center justify-center gap-2"
           >
             <Plus className="w-4 h-4" /> Add Driver
           </button>
           <button 
-            onClick={() => setIsClientModalOpen(true)}
-            className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 flex items-center gap-2"
+            onClick={openAddClientModal}
+            className="flex-1 md:flex-none px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 flex items-center justify-center gap-2"
           >
             <Plus className="w-4 h-4" /> Add Client
           </button>
@@ -84,7 +128,7 @@ export const Clients = () => {
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         {clients.map(client => (
-          <div key={client.id} className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+          <div key={client.id} className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden flex flex-col">
             <div className="p-5 border-b border-gray-100 bg-gray-50 flex justify-between items-start">
               <div>
                 <h3 className="font-bold text-gray-800 text-lg">{client.name}</h3>
@@ -92,22 +136,45 @@ export const Clients = () => {
                    <Phone className="w-3 h-3" /> {client.contact}
                 </div>
               </div>
-              <button 
-                onClick={() => deleteClient(client.id)}
-                className="text-gray-400 hover:text-red-500 transition-colors"
-              >
-                <Trash2 className="w-4 h-4" />
-              </button>
+              <div className="flex gap-2">
+                <button 
+                  onClick={() => openEditClientModal(client)}
+                  className="text-gray-400 hover:text-blue-600 transition-colors"
+                  title="Edit Client"
+                >
+                  <Edit2 className="w-4 h-4" />
+                </button>
+                <button 
+                  onClick={() => deleteClient(client.id)}
+                  className="text-gray-400 hover:text-red-500 transition-colors"
+                  title="Delete Client"
+                >
+                  <Trash2 className="w-4 h-4" />
+                </button>
+              </div>
             </div>
             
-            <div className="p-5">
+            <div className="p-5 flex-1 flex flex-col">
               <div className="space-y-2 mb-4">
                  <div className="flex items-center gap-2 text-sm text-blue-600 bg-blue-50 p-2 rounded-lg w-fit">
                     <Clock className="w-4 h-4" />
                     <span className="font-medium">{client.invoiceFrequency} Billing</span>
                  </div>
+                 
+                 {/* Custom Pricing Display */}
+                 {client.customPricing && Object.keys(client.customPricing).length > 0 && (
+                   <div className="flex items-start gap-2 text-xs text-green-700 bg-green-50 p-2 rounded-lg mt-2">
+                      <IndianRupee className="w-3 h-3 mt-0.5" />
+                      <div className="flex flex-wrap gap-x-3 gap-y-1">
+                        {Object.entries(client.customPricing).map(([size, price]) => (
+                          <span key={size} className="font-medium">{size}: Rs. {price}</span>
+                        ))}
+                      </div>
+                   </div>
+                 )}
+
                  {client.address && (
-                    <div className="flex items-start gap-2 text-sm text-gray-600">
+                    <div className="flex items-start gap-2 text-sm text-gray-600 mt-2">
                        <MapPin className="w-4 h-4 mt-0.5 text-gray-400" />
                        {client.address}
                     </div>
@@ -120,7 +187,7 @@ export const Clients = () => {
                  )}
               </div>
 
-              <div>
+              <div className="mt-auto">
                 <h4 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Drivers</h4>
                 <div className="space-y-2">
                   {drivers.filter(d => d.clientId === client.id).map(driver => (
@@ -147,11 +214,11 @@ export const Clients = () => {
         ))}
       </div>
 
-      {/* Add Client Modal */}
+      {/* Add/Edit Client Modal */}
       {isClientModalOpen && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl max-w-md w-full p-6">
-            <h3 className="text-xl font-bold mb-4">Add New Client</h3>
+          <div className="bg-white rounded-xl max-w-md w-full p-6 max-h-[90vh] overflow-y-auto">
+            <h3 className="text-xl font-bold mb-4">{editingClientId ? 'Edit Client' : 'Add New Client'}</h3>
             <form onSubmit={handleSubmitClient(onClientSubmit)} className="space-y-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Client Name</label>
@@ -171,7 +238,24 @@ export const Clients = () => {
                   <option value="15-Days">15-Days (1-15 & 16-End)</option>
                   <option value="Weekly">Weekly</option>
                 </select>
-                <p className="text-xs text-gray-500 mt-1">Determines how bills are grouped in reports.</p>
+              </div>
+
+              <div className="bg-gray-50 p-3 rounded-lg border border-gray-200">
+                <h4 className="text-sm font-medium text-gray-800 mb-2">Custom Pricing (Optional)</h4>
+                <p className="text-xs text-gray-500 mb-3">Leave blank to use global defaults set in Settings.</p>
+                <div className="grid grid-cols-2 gap-3">
+                  {tankerSizes.map(size => (
+                    <div key={size.id}>
+                      <label className="block text-xs font-medium text-gray-700 mb-1">{size.name} (Rs.)</label>
+                      <input 
+                        type="number" 
+                        {...registerClient(`customPricing.${size.name}`)} 
+                        className="w-full p-2 border rounded-lg text-sm" 
+                        placeholder={`Def: ${size.price}`} 
+                      />
+                    </div>
+                  ))}
+                </div>
               </div>
 
               <div>
@@ -182,9 +266,11 @@ export const Clients = () => {
                 <label className="block text-sm font-medium text-gray-700 mb-1">Address (Optional)</label>
                 <textarea {...registerClient('address')} className="w-full p-2 border rounded-lg" placeholder="Delivery Address" />
               </div>
-              <div className="flex justify-end gap-3 mt-6">
+              <div className="flex justify-end gap-3 mt-6 pt-4 border-t">
                 <button type="button" onClick={() => setIsClientModalOpen(false)} className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg">Cancel</button>
-                <button type="submit" className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">Save Client</button>
+                <button type="submit" className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">
+                  {editingClientId ? 'Update Client' : 'Save Client'}
+                </button>
               </div>
             </form>
           </div>

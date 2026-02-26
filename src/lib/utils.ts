@@ -5,12 +5,19 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
-export const formatCurrency = (amount: number) => {
-  return new Intl.NumberFormat('en-IN', {
-    style: 'currency',
-    currency: 'INR',
+// Strict number formatter to prevent any hidden characters or unsupported symbols
+export const formatNumber = (amount: number) => {
+  if (amount === undefined || amount === null) return '0';
+  const str = amount.toLocaleString('en-IN', {
     maximumFractionDigits: 0,
-  }).format(amount);
+    style: 'decimal'
+  });
+  // Strip any hidden currency symbols or non-breaking spaces that cause the '¹' glitch
+  return str.replace(/[^0-9.,-]/g, '').trim();
+};
+
+export const formatCurrency = (amount: number) => {
+  return `Rs. ${formatNumber(amount)}`;
 };
 
 export const generateId = () => Math.random().toString(36).substr(2, 9);

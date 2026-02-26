@@ -1,11 +1,12 @@
 import React, { useState, useMemo } from 'react';
 import { useStore } from '../store/useStore';
 import { generateId, formatCurrency } from '../lib/utils';
-import { Plus, Trash2, Filter, Receipt, CheckCircle2, XCircle, AlertCircle } from 'lucide-react';
+import { Plus, Trash2, Filter, Receipt, CheckCircle2, XCircle, AlertCircle, FileText, Mail, MessageCircle, Download } from 'lucide-react';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { format, startOfMonth, endOfMonth, startOfWeek, endOfWeek, isWithinInterval, parseISO, compareAsc } from 'date-fns';
+import { format, startOfMonth, endOfMonth, startOfWeek, endOfWeek, parseISO } from 'date-fns';
+import { generateComprehensiveReportPDF } from '../lib/pdfGenerator';
 
 const paymentSchema = z.object({
   clientId: z.string().min(1, 'Client is required'),
@@ -21,10 +22,14 @@ const paymentSchema = z.object({
 type PaymentForm = z.infer<typeof paymentSchema>;
 
 export const Payments = () => {
-  const { clients, payments, entries, addPayment, deletePayment } = useStore();
+  const { clients, payments, entries, addPayment, deletePayment, invoiceSettings } = useStore();
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [filterClient, setFilterClient] = useState('');
-  const [historyClient, setHistoryClient] = useState('');
+  
+  // Unified Report State
+  const [reportClient, setReportClient] = useState('');
+  const [reportFrom, setReportFrom] = useState(new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0]);
+  const [reportTo, setReportTo] = useState(new Date().toISOString().split('T')[0]);
 
   const { register, handleSubmit, reset, watch, formState: { errors } } = useForm<PaymentForm>({
     resolver: zodResolver(paymentSchema),
@@ -49,23 +54,17 @@ export const Payments = () => {
     ? payments.filter(p => p.clientId === filterClient)
     : payments;
 
-  // --- Billing History Logic ---
+  // --- Billing History Logic (For the unified report) ---
   const billingHistory = useMemo(() => {
-    if (!historyClient) return null;
-    const client = clients.find(c => c.id === historyClient);
+    if (!reportClient) return null;
+    const client = clients.find(c => c.id === reportClient);
     if (!client) return null;
 
-    const clientEntries = entries.filter(e => e.clientId === historyClient).sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+    const clientEntries = entries.filter(e => e.clientId === reportClient).sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
     if (clientEntries.length === 0) return { bills: [], totalPaid: 0, totalPending: 0 };
 
-    // Group entries based on frequency
-    const bills: { start: Date, end: Date, trips: number, amount: number, status: 'Paid' | 'Pending' | 'Partial' }[] = [];
+    const bills: { start: Date, end: Date, trips: number, amount: number, status: 'Paid' | 'Pending' | 'InComplete' }[] = [];
     
-    // Helper to find existing bill period
-    const findBillIndex = (date: Date) => {
-      return bills.findIndex(b => isWithinInterval(date, { start: b.start, end: b.end }));
-    };
-
     clientEntries.forEach(entry => {
       const date = parseISO(entry.date);
       let start: Date, end: Date;
@@ -83,14 +82,11 @@ export const Payments = () => {
         start = startOfWeek(date);
         end = endOfWeek(date);
       } else {
-        // Monthly
         start = startOfMonth(date);
         end = endOfMonth(date);
       }
 
-      let billIdx = bills.findIndex(b => 
-        (b.start.getTime() === start.getTime()) // Simple timestamp check for same period
-      );
+      let billIdx = bills.findIndex(b => (b.start.getTime() === start.getTime()));
 
       if (billIdx === -1) {
         bills.push({ start, end, trips: 0, amount: 0, status: 'Pending' });
@@ -101,11 +97,9 @@ export const Payments = () => {
       bills[billIdx].amount += entry.price;
     });
 
-    // Sort bills chronologically
     bills.sort((a, b) => a.start.getTime() - b.start.getTime());
 
-    // Calculate Status based on Total Payments
-    const totalPaid = payments.filter(p => p.clientId === historyClient).reduce((sum, p) => sum + p.amount, 0);
+    const totalPaid = payments.filter(p => p.clientId === reportClient).reduce((sum, p) => sum + p.amount, 0);
     let remainingPayment = totalPaid;
     let totalBilled = 0;
 
@@ -115,7 +109,7 @@ export const Payments = () => {
         bill.status = 'Paid';
         remainingPayment -= bill.amount;
       } else if (remainingPayment > 0) {
-        bill.status = 'Partial';
+        bill.status = 'InComplete'; 
         remainingPayment = 0;
       } else {
         bill.status = 'Pending';
@@ -127,102 +121,181 @@ export const Payments = () => {
       totalPaid,
       totalPending: Math.max(0, totalBilled - totalPaid)
     };
-  }, [historyClient, entries, clients, payments]);
+  }, [reportClient, entries, clients, payments]);
 
+  // --- Comprehensive Report Handlers ---
+  const handleDownloadReport = () => {
+    const client = clients.find(c => c.id === reportClient);
+    if (!client || !billingHistory) return;
+    
+    const recentTx = payments.filter(p => p.clientId === reportClient).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()).slice(0, 10);
+    
+    const doc = generateComprehensiveReportPDF(
+      client, entries, payments, reportFrom, reportTo, billingHistory, recentTx, invoiceSettings
+    );
+    doc.save(`Financial_Report_${client.name}_${reportFrom}_to_${reportTo}.pdf`);
+  };
+
+  const handleEmailReport = () => {
+    const client = clients.find(c => c.id === reportClient);
+    if (!client || !billingHistory) return;
+    
+    handleDownloadReport(); // Auto download to attach
+    
+    const subject = encodeURIComponent(`Comprehensive Financial Report: ${client.name}`);
+    const body = encodeURIComponent(`Dear ${client.name},\n\nPlease find attached your comprehensive financial report including your account statement (${format(new Date(reportFrom), 'dd MMM')} to ${format(new Date(reportTo), 'dd MMM')}) and overall billing summary.\n\nTotal Pending: ${formatCurrency(billingHistory.totalPending)}\n\nRegards,\n${invoiceSettings.companyName}`);
+    const cc = invoiceSettings.ccEmails ? `&cc=${encodeURIComponent(invoiceSettings.ccEmails)}` : '';
+    window.open(`mailto:${client.email}?subject=${subject}&body=${body}${cc}`, '_blank');
+  };
+
+  const handleWhatsAppReport = () => {
+    const client = clients.find(c => c.id === reportClient);
+    if (!client || !billingHistory) return;
+
+    handleDownloadReport(); // Auto download to attach
+
+    const text = encodeURIComponent(`*Comprehensive Financial Report for ${client.name}*\n\nStatement Period: ${format(new Date(reportFrom), 'dd MMM')} to ${format(new Date(reportTo), 'dd MMM')}\nOverall Total Pending: ${formatCurrency(billingHistory.totalPending)}\n\n_Please check the attached PDF for full ledger and billing history._`);
+    window.open(`https://wa.me/?text=${text}`, '_blank');
+  };
 
   return (
     <div className="space-y-8">
       {/* Header */}
-      <div className="flex justify-between items-center">
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>
           <h2 className="text-2xl font-bold text-gray-800">Payments & Billing</h2>
-          <p className="text-gray-500">Track payments and view automated billing history.</p>
+          <p className="text-gray-500">Track payments and generate comprehensive reports.</p>
         </div>
         <button 
           onClick={() => setIsModalOpen(true)}
-          className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 flex items-center gap-2"
+          className="w-full md:w-auto px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 flex items-center justify-center gap-2"
         >
           <Plus className="w-4 h-4" /> Record Payment
         </button>
       </div>
 
-      {/* Billing History Section */}
+      {/* Unified Comprehensive Report Section */}
       <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-        <h3 className="text-lg font-bold text-gray-800 mb-4 flex items-center gap-2">
-          <Receipt className="w-5 h-5 text-blue-600" />
-          Automated Bill History
-        </h3>
+        <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
+          <div>
+            <h3 className="text-lg font-bold text-gray-800 flex items-center gap-2">
+              <FileText className="w-5 h-5 text-blue-600" />
+              Comprehensive Financial Report
+            </h3>
+            <p className="text-sm text-gray-500">Generates a single PDF containing both the Date-Range Ledger & Automated Billing History.</p>
+          </div>
+          
+          <div className="flex flex-wrap gap-2 w-full md:w-auto">
+            <button 
+              onClick={handleDownloadReport}
+              disabled={!reportClient}
+              className="flex-1 md:flex-none px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 flex items-center justify-center gap-2 disabled:opacity-50 text-sm font-medium"
+            >
+              <Download className="w-4 h-4" /> PDF
+            </button>
+            <button 
+              onClick={handleEmailReport}
+              disabled={!reportClient}
+              className="flex-1 md:flex-none px-4 py-2 bg-blue-50 text-blue-700 rounded-lg hover:bg-blue-100 flex items-center justify-center gap-2 disabled:opacity-50 text-sm font-medium"
+            >
+              <Mail className="w-4 h-4" /> Email
+            </button>
+            <button 
+              onClick={handleWhatsAppReport}
+              disabled={!reportClient}
+              className="flex-1 md:flex-none px-4 py-2 bg-green-50 text-green-700 rounded-lg hover:bg-green-100 flex items-center justify-center gap-2 disabled:opacity-50 text-sm font-medium"
+            >
+              <MessageCircle className="w-4 h-4" /> WhatsApp
+            </button>
+          </div>
+        </div>
         
-        <div className="mb-6">
-          <label className="block text-sm font-medium text-gray-700 mb-2">Select Client to View History</label>
-          <select 
-            value={historyClient} 
-            onChange={(e) => setHistoryClient(e.target.value)}
-            className="w-full md:w-1/3 p-2 border rounded-lg"
-          >
-            <option value="">-- Select Client --</option>
-            {clients.map(c => <option key={c.id} value={c.id}>{c.name} ({c.invoiceFrequency})</option>)}
-          </select>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6 bg-gray-50 p-4 rounded-lg border border-gray-100">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Select Client</label>
+            <select 
+              value={reportClient} 
+              onChange={(e) => setReportClient(e.target.value)}
+              className="w-full p-2 border rounded-lg bg-white"
+            >
+              <option value="">-- Select Client --</option>
+              {clients.map(c => <option key={c.id} value={c.id}>{c.name} ({c.invoiceFrequency})</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Ledger From Date</label>
+            <input type="date" value={reportFrom} onChange={(e) => setReportFrom(e.target.value)} className="w-full p-2 border rounded-lg bg-white" />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Ledger To Date</label>
+            <input type="date" value={reportTo} onChange={(e) => setReportTo(e.target.value)} className="w-full p-2 border rounded-lg bg-white" />
+          </div>
         </div>
 
-        {billingHistory && (
-          <div className="space-y-6">
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <div className="bg-green-50 p-4 rounded-lg border border-green-100">
-                <p className="text-sm text-green-600 font-medium">Total Received</p>
-                <p className="text-2xl font-bold text-green-700">{formatCurrency(billingHistory.totalPaid)}</p>
+        {/* Live Preview of Billing History */}
+        {billingHistory ? (
+          <div className="space-y-4">
+            <h4 className="font-semibold text-gray-700 border-b pb-2">Live Billing Summary Preview</h4>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="bg-green-50 p-4 rounded-lg border border-green-100 flex justify-between items-center">
+                <p className="text-sm text-green-700 font-medium">Total Received (All Time)</p>
+                <p className="text-xl font-bold text-green-800">{formatCurrency(billingHistory.totalPaid)}</p>
               </div>
-              <div className="bg-red-50 p-4 rounded-lg border border-red-100">
-                <p className="text-sm text-red-600 font-medium">Total Pending</p>
-                <p className="text-2xl font-bold text-red-700">{formatCurrency(billingHistory.totalPending)}</p>
+              <div className="bg-red-50 p-4 rounded-lg border border-red-100 flex justify-between items-center">
+                <p className="text-sm text-red-700 font-medium">Total Pending (All Time)</p>
+                <p className="text-xl font-bold text-red-800">{formatCurrency(billingHistory.totalPending)}</p>
               </div>
             </div>
 
-            <div className="overflow-x-auto border rounded-lg">
-              <table className="w-full text-left text-sm">
-                <thead className="bg-gray-50 text-gray-500">
+            <div className="overflow-x-auto border rounded-lg max-h-64 overflow-y-auto">
+              <table className="w-full text-left text-sm whitespace-nowrap">
+                <thead className="bg-gray-50 text-gray-500 sticky top-0">
                   <tr>
-                    <th className="px-6 py-3 font-medium">Date Range</th>
-                    <th className="px-6 py-3 font-medium">Total Trips</th>
-                    <th className="px-6 py-3 font-medium">Bill Amount</th>
-                    <th className="px-6 py-3 font-medium">Status</th>
+                    <th className="px-4 py-3 font-medium">Billing Period</th>
+                    <th className="px-4 py-3 font-medium">Trips</th>
+                    <th className="px-4 py-3 font-medium">Amount</th>
+                    <th className="px-4 py-3 font-medium">Status</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
                   {billingHistory.bills.map((bill, idx) => (
                     <tr key={idx} className="hover:bg-gray-50">
-                      <td className="px-6 py-3 text-gray-700 font-medium">
+                      <td className="px-4 py-3 text-gray-700 font-medium text-xs">
                         {format(bill.start, 'dd MMM yyyy')} - {format(bill.end, 'dd MMM yyyy')}
                       </td>
-                      <td className="px-6 py-3 text-gray-600">{bill.trips}</td>
-                      <td className="px-6 py-3 font-bold text-gray-800">{formatCurrency(bill.amount)}</td>
-                      <td className="px-6 py-3">
-                        {bill.status === 'Paid' && <span className="flex items-center gap-1 text-green-600 font-medium"><CheckCircle2 className="w-4 h-4" /> Paid</span>}
-                        {bill.status === 'Pending' && <span className="flex items-center gap-1 text-red-600 font-medium"><XCircle className="w-4 h-4" /> Pending</span>}
-                        {bill.status === 'Partial' && <span className="flex items-center gap-1 text-orange-600 font-medium"><AlertCircle className="w-4 h-4" /> Partial</span>}
+                      <td className="px-4 py-3 text-gray-600">{bill.trips}</td>
+                      <td className="px-4 py-3 font-bold text-gray-800">{formatCurrency(bill.amount)}</td>
+                      <td className="px-4 py-3">
+                        {bill.status === 'Paid' && <span className="flex items-center gap-1 text-green-600 font-medium text-xs"><CheckCircle2 className="w-3 h-3" /> Paid</span>}
+                        {bill.status === 'Pending' && <span className="flex items-center gap-1 text-red-600 font-medium text-xs"><XCircle className="w-3 h-3" /> Pending</span>}
+                        {bill.status === 'InComplete' && <span className="flex items-center gap-1 text-orange-600 font-medium text-xs"><AlertCircle className="w-3 h-3" /> InComplete</span>}
                       </td>
                     </tr>
                   ))}
                   {billingHistory.bills.length === 0 && (
-                    <tr><td colSpan={4} className="px-6 py-8 text-center text-gray-500">No entries found for this client.</td></tr>
+                    <tr><td colSpan={4} className="px-4 py-6 text-center text-gray-500">No trips recorded to generate billing periods.</td></tr>
                   )}
                 </tbody>
               </table>
             </div>
+          </div>
+        ) : (
+          <div className="py-8 text-center text-gray-400 text-sm border-2 border-dashed rounded-lg">
+            Select a client to preview their billing summary.
           </div>
         )}
       </div>
 
       {/* Recent Payments List */}
       <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-        <div className="p-4 border-b border-gray-100 flex justify-between items-center bg-gray-50">
+        <div className="p-4 border-b border-gray-100 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 bg-gray-50">
           <h3 className="font-bold text-gray-800">Recent Transactions</h3>
-          <div className="flex gap-2 items-center">
+          <div className="flex gap-2 items-center w-full sm:w-auto bg-white px-3 py-1.5 rounded-lg border">
              <Filter className="w-4 h-4 text-gray-400" />
              <select 
                value={filterClient} 
                onChange={(e) => setFilterClient(e.target.value)}
-               className="bg-transparent text-sm border-none focus:ring-0 text-gray-600 font-medium"
+               className="bg-transparent text-sm border-none focus:ring-0 text-gray-600 font-medium w-full"
              >
                <option value="">All Clients</option>
                {clients.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
@@ -231,7 +304,7 @@ export const Payments = () => {
         </div>
         
         <div className="overflow-x-auto">
-          <table className="w-full text-left text-sm">
+          <table className="w-full text-left text-sm whitespace-nowrap">
             <thead className="bg-gray-50 text-gray-500">
               <tr>
                 <th className="px-6 py-3 font-medium">Date</th>
@@ -294,7 +367,7 @@ export const Payments = () => {
                 {errors.clientId && <p className="text-red-500 text-xs mt-1">{errors.clientId.message}</p>}
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Amount (₹)</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Amount (Rs.)</label>
                 <input type="number" {...register('amount', { valueAsNumber: true })} className="w-full p-2 border rounded-lg" placeholder="0.00" />
                 {errors.amount && <p className="text-red-500 text-xs mt-1">{errors.amount.message}</p>}
               </div>

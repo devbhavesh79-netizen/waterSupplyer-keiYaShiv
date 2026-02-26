@@ -1,16 +1,16 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useMemo, useEffect } from 'react';
 import { useStore } from '../store/useStore';
 import { generateId, formatCurrency } from '../lib/utils';
-import { Plus, Mic, MicOff, Trash2, Layers, Activity, HelpCircle, Keyboard } from 'lucide-react';
+import { Plus, Mic, MicOff, Trash2, Layers, Activity, HelpCircle, Keyboard, Filter, X } from 'lucide-react';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { format } from 'date-fns';
+import { format, parseISO, isWithinInterval, startOfDay, endOfDay } from 'date-fns';
 
 const entrySchema = z.object({
   clientId: z.string().min(1, 'Client is required'),
   driverId: z.string().min(1, 'Driver is required'),
-  type: z.enum(['5000L', '30000L']),
+  type: z.string().min(1, 'Tanker type is required'),
   date: z.string(),
   count: z.number().min(1).max(50).default(1),
 });
@@ -23,7 +23,7 @@ interface IWindow extends Window {
 }
 
 export const Entries = () => {
-  const { clients, drivers, entries, pricing, addEntry, addBulkEntries, deleteEntry } = useStore();
+  const { clients, drivers, entries, tankerSizes, addEntry, addBulkEntries, deleteEntry } = useStore();
   const [isListening, setIsListening] = useState(false);
   const [isBulkMode, setIsBulkMode] = useState(false);
   const [voiceTranscript, setVoiceTranscript] = useState('');
@@ -32,19 +32,41 @@ export const Entries = () => {
   const [showHelp, setShowHelp] = useState(false);
   const [showManualInput, setShowManualInput] = useState(false);
   
+  // Filter States
+  const [filterFrom, setFilterFrom] = useState('');
+  const [filterTo, setFilterTo] = useState('');
+  const [filterClient, setFilterClient] = useState('');
+  const [filterDriver, setFilterDriver] = useState('');
+  const [filterType, setFilterType] = useState('');
+
   const recognitionRef = useRef<any>(null);
+
+  const defaultType = tankerSizes.length > 0 ? tankerSizes[0].name : '';
 
   const { register, handleSubmit, watch, setValue, reset, formState: { errors } } = useForm<EntryForm>({
     resolver: zodResolver(entrySchema),
     defaultValues: {
       date: new Date().toISOString().split('T')[0],
-      type: '5000L',
+      type: defaultType,
       count: 1
     }
   });
 
+  // Ensure default type is set if tankerSizes load late
+  useEffect(() => {
+    if (!watch('type') && tankerSizes.length > 0) {
+      setValue('type', tankerSizes[0].name);
+    }
+  }, [tankerSizes, setValue, watch]);
+
   const selectedClientId = watch('clientId');
   const availableDrivers = drivers.filter(d => d.clientId === selectedClientId);
+  
+  const getPriceForEntry = (clientId: string, typeName: string) => {
+    const client = clients.find(c => c.id === clientId);
+    const size = tankerSizes.find(s => s.name === typeName);
+    return client?.customPricing?.[typeName] || size?.price || 0;
+  };
 
   const generateDistributedTimes = (baseDate: Date, count: number) => {
     const times = [];
@@ -64,6 +86,8 @@ export const Entries = () => {
   };
 
   const onSubmit = (data: EntryForm) => {
+    const entryPrice = getPriceForEntry(data.clientId, data.type);
+
     if (data.count > 1) {
       const newEntries = [];
       const baseDate = new Date(data.date);
@@ -75,7 +99,7 @@ export const Entries = () => {
           clientId: data.clientId,
           driverId: data.driverId,
           type: data.type,
-          price: pricing[data.type],
+          price: entryPrice,
           date: time.toISOString()
         });
       });
@@ -95,14 +119,14 @@ export const Entries = () => {
         id: generateId(),
         ...data,
         date: entryDate.toISOString(),
-        price: pricing[data.type]
+        price: entryPrice
       });
       setVoiceFeedback({ type: 'success', msg: 'Entry added successfully' });
     }
 
     reset({
       date: new Date().toISOString().split('T')[0],
-      type: '5000L',
+      type: defaultType,
       clientId: '',
       driverId: '',
       count: 1
@@ -130,9 +154,14 @@ export const Entries = () => {
       return;
     }
 
-    // 3. Identify Tanker Type
-    let type: '5000L' | '30000L' = '5000L';
-    if (lower.includes('30000') || lower.includes('30 thousand') || lower.includes('bada') || lower.includes('big')) type = '30000L';
+    // 3. Identify Tanker Type (Dynamic)
+    let type = defaultType;
+    for (const size of tankerSizes) {
+      if (lower.includes(size.name.toLowerCase()) || lower.includes(size.name.replace(/\D/g,''))) {
+        type = size.name;
+        break;
+      }
+    }
 
     // 4. Identify Month
     const months = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
@@ -144,7 +173,7 @@ export const Entries = () => {
 
     const year = new Date().getFullYear();
 
-    // 5. Complex Parsing: "1 ko 5, 2 ko 6"
+    // 5. Complex Parsing
     const dailyPattern = /(\d{1,2})\s*(?:ko|date|tarikh|trip|trips|entry|entries)\s*(\d{1,2})/g;
     let match;
     const bulkData: { day: number, count: number }[] = [];
@@ -160,6 +189,7 @@ export const Entries = () => {
     if (bulkData.length > 0) {
       const allNewEntries: any[] = [];
       let totalTrips = 0;
+      const entryPrice = getPriceForEntry(matchedClient.id, type);
 
       bulkData.forEach(({ day, count }) => {
         const date = new Date(year, monthIdx, day);
@@ -171,7 +201,7 @@ export const Entries = () => {
             clientId: matchedClient.id,
             driverId: matchedDriver!.id,
             type,
-            price: pricing[type],
+            price: entryPrice,
             date: time.toISOString()
           });
         });
@@ -256,11 +286,46 @@ export const Entries = () => {
     setManualCommand('');
   };
 
+  const clearFilters = () => {
+    setFilterFrom('');
+    setFilterTo('');
+    setFilterClient('');
+    setFilterDriver('');
+    setFilterType('');
+  };
+
+  const filteredEntries = useMemo(() => {
+    return entries.filter(entry => {
+      let isValid = true;
+      const entryDate = parseISO(entry.date);
+
+      if (filterFrom) {
+        isValid = isValid && entryDate >= startOfDay(parseISO(filterFrom));
+      }
+      if (filterTo) {
+        isValid = isValid && entryDate <= endOfDay(parseISO(filterTo));
+      }
+      if (filterClient) {
+        isValid = isValid && entry.clientId === filterClient;
+      }
+      if (filterDriver) {
+        isValid = isValid && entry.driverId === filterDriver;
+      }
+      if (filterType) {
+        isValid = isValid && entry.type === filterType;
+      }
+
+      return isValid;
+    });
+  }, [entries, filterFrom, filterTo, filterClient, filterDriver, filterType]);
+
+  const filterAvailableDrivers = drivers.filter(d => filterClient ? d.clientId === filterClient : true);
+
   return (
     <div className="space-y-6">
-      <div className="flex flex-col md:flex-row gap-6">
+      <div className="flex flex-col lg:flex-row gap-6">
         {/* Entry Form */}
-        <div className="w-full md:w-1/3">
+        <div className="w-full lg:w-1/3">
           <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200 sticky top-6">
             <div className="flex justify-between items-center mb-6">
               <h2 className="text-lg font-bold text-gray-800">
@@ -299,19 +364,17 @@ export const Entries = () => {
               </div>
             </div>
 
-            {/* Help Box */}
             {showHelp && (
               <div className="mb-4 p-3 bg-yellow-50 border border-yellow-200 rounded-lg text-sm text-yellow-800">
                 <p className="font-bold mb-1">Try saying (or typing):</p>
                 <ul className="list-disc pl-4 space-y-1 text-xs">
                   <li>"Hemu 1 date ko 5, 2 ko 6 trips"</li>
                   <li>"Ravi 10 entries" (Uses today's date)</li>
-                  <li>"Hemu 30000 liters"</li>
+                  <li>`Hemu ${tankerSizes[0]?.name || '5000'}`</li>
                 </ul>
               </div>
             )}
 
-            {/* Manual Input Box */}
             {showManualInput && (
               <form onSubmit={handleManualCommandSubmit} className="mb-4">
                 <div className="flex gap-2">
@@ -327,7 +390,6 @@ export const Entries = () => {
               </form>
             )}
 
-            {/* Voice Feedback Area */}
             {(voiceFeedback || isListening) && (
               <div className={`mb-4 p-3 rounded-lg text-sm border ${
                 voiceFeedback?.type === 'error' ? 'bg-red-50 border-red-200 text-red-700' : 
@@ -372,18 +434,19 @@ export const Entries = () => {
 
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Tanker Type</label>
-                <div className="grid grid-cols-2 gap-3">
-                  <label className={`border rounded-lg p-3 text-center cursor-pointer transition-colors ${watch('type') === '5000L' ? 'bg-blue-50 border-blue-500 text-blue-700' : 'hover:bg-gray-50'}`}>
-                    <input type="radio" value="5000L" {...register('type')} className="hidden" />
-                    <span className="block font-semibold">5000L</span>
-                    <span className="text-xs text-gray-500">{formatCurrency(pricing['5000L'])}</span>
-                  </label>
-                  <label className={`border rounded-lg p-3 text-center cursor-pointer transition-colors ${watch('type') === '30000L' ? 'bg-blue-50 border-blue-500 text-blue-700' : 'hover:bg-gray-50'}`}>
-                    <input type="radio" value="30000L" {...register('type')} className="hidden" />
-                    <span className="block font-semibold">30,000L</span>
-                    <span className="text-xs text-gray-500">{formatCurrency(pricing['30000L'])}</span>
-                  </label>
+                <div className={`grid gap-3 ${tankerSizes.length > 2 ? 'grid-cols-3' : 'grid-cols-2'}`}>
+                  {tankerSizes.map(size => {
+                    const priceToDisplay = getPriceForEntry(selectedClientId, size.name);
+                    return (
+                      <label key={size.id} className={`border rounded-lg p-3 text-center cursor-pointer transition-colors ${watch('type') === size.name ? 'bg-blue-50 border-blue-500 text-blue-700' : 'hover:bg-gray-50'}`}>
+                        <input type="radio" value={size.name} {...register('type')} className="hidden" />
+                        <span className="block font-semibold text-sm">{size.name}</span>
+                        <span className="text-xs text-gray-500">{formatCurrency(priceToDisplay)}</span>
+                      </label>
+                    );
+                  })}
                 </div>
+                {errors.type && <p className="text-red-500 text-xs mt-1">{errors.type.message}</p>}
               </div>
 
               {isBulkMode && (
@@ -409,16 +472,60 @@ export const Entries = () => {
           </div>
         </div>
 
-        {/* Recent Entries List */}
+        {/* Recent Entries List with Filters */}
         <div className="flex-1">
           <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-            <div className="p-6 border-b border-gray-100 flex justify-between items-center">
-              <h2 className="text-lg font-bold text-gray-800">Recent Entries</h2>
-              <span className="text-xs text-gray-500 bg-gray-100 px-2 py-1 rounded-full">{entries.length} Total</span>
+            <div className="p-4 border-b border-gray-100 bg-gray-50">
+              <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-4 gap-2">
+                <h2 className="text-lg font-bold text-gray-800 flex items-center gap-2">
+                  <Filter className="w-5 h-5 text-blue-600" /> Filter Entries
+                </h2>
+                <div className="flex gap-2 items-center">
+                  <span className="text-xs text-gray-500 bg-white px-2 py-1 rounded-full border">{filteredEntries.length} Results</span>
+                  {(filterFrom || filterTo || filterClient || filterDriver || filterType) && (
+                    <button onClick={clearFilters} className="text-xs text-red-500 hover:text-red-700 flex items-center gap-1">
+                      <X className="w-3 h-3" /> Clear All
+                    </button>
+                  )}
+                </div>
+              </div>
+              
+              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">From Date</label>
+                  <input type="date" value={filterFrom} onChange={(e) => setFilterFrom(e.target.value)} className="w-full p-1.5 text-sm border rounded" />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">To Date</label>
+                  <input type="date" value={filterTo} onChange={(e) => setFilterTo(e.target.value)} className="w-full p-1.5 text-sm border rounded" />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Client</label>
+                  <select value={filterClient} onChange={(e) => { setFilterClient(e.target.value); setFilterDriver(''); }} className="w-full p-1.5 text-sm border rounded">
+                    <option value="">All Clients</option>
+                    {clients.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Driver</label>
+                  <select value={filterDriver} onChange={(e) => setFilterDriver(e.target.value)} className="w-full p-1.5 text-sm border rounded" disabled={!filterClient && filterAvailableDrivers.length === drivers.length}>
+                    <option value="">All Drivers</option>
+                    {filterAvailableDrivers.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Type</label>
+                  <select value={filterType} onChange={(e) => setFilterType(e.target.value)} className="w-full p-1.5 text-sm border rounded">
+                    <option value="">All Types</option>
+                    {tankerSizes.map(s => <option key={s.id} value={s.name}>{s.name}</option>)}
+                  </select>
+                </div>
+              </div>
             </div>
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-sm">
-                <thead className="bg-gray-50 text-gray-500">
+            
+            <div className="overflow-x-auto max-h-[600px] overflow-y-auto">
+              <table className="w-full text-left text-sm whitespace-nowrap">
+                <thead className="bg-white text-gray-500 sticky top-0 shadow-sm">
                   <tr>
                     <th className="px-6 py-3 font-medium">Date & Time</th>
                     <th className="px-6 py-3 font-medium">Client</th>
@@ -429,7 +536,7 @@ export const Entries = () => {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
-                  {entries.slice(0, 20).map(entry => { 
+                  {filteredEntries.slice(0, 100).map(entry => { 
                     const client = clients.find(c => c.id === entry.clientId);
                     const driver = drivers.find(d => d.id === entry.driverId);
                     return (
@@ -440,7 +547,7 @@ export const Entries = () => {
                         <td className="px-6 py-3 font-medium text-gray-900">{client?.name || 'Unknown'}</td>
                         <td className="px-6 py-3 text-gray-600">{driver?.name || 'Unknown'}</td>
                         <td className="px-6 py-3">
-                          <span className={`px-2 py-1 rounded text-xs font-medium ${entry.type === '5000L' ? 'bg-blue-100 text-blue-700' : 'bg-purple-100 text-purple-700'}`}>
+                          <span className="px-2 py-1 rounded text-xs font-medium bg-blue-100 text-blue-700">
                             {entry.type}
                           </span>
                         </td>
@@ -453,13 +560,18 @@ export const Entries = () => {
                       </tr>
                     );
                   })}
-                  {entries.length === 0 && (
+                  {filteredEntries.length === 0 && (
                     <tr>
-                      <td colSpan={6} className="px-6 py-8 text-center text-gray-500">No entries found. Add one to get started.</td>
+                      <td colSpan={6} className="px-6 py-8 text-center text-gray-500">No entries found matching your filters.</td>
                     </tr>
                   )}
                 </tbody>
               </table>
+              {filteredEntries.length > 100 && (
+                <div className="p-3 text-center text-xs text-gray-500 bg-gray-50 border-t">
+                  Showing top 100 results. Use filters to narrow down.
+                </div>
+              )}
             </div>
           </div>
         </div>

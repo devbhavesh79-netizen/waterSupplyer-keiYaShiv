@@ -1,13 +1,13 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import { AppState, Client, Driver, TankerEntry, Payment, Pricing, InvoiceSettings } from '../types';
+import { AppState, Client, Driver, TankerEntry, Payment, TankerSize, InvoiceSettings } from '../types';
 import { generateId } from '../lib/utils';
 import { subDays } from 'date-fns';
 
-const initialPricing: Pricing = {
-  '5000L': 150,
-  '30000L': 750,
-};
+const initialTankerSizes: TankerSize[] = [
+  { id: 't1', name: '5000L', price: 150 },
+  { id: 't2', name: '30000L', price: 750 },
+];
 
 const initialInvoiceSettings: InvoiceSettings = {
   companyName: 'KeiYaShiv Water Supply',
@@ -16,13 +16,13 @@ const initialInvoiceSettings: InvoiceSettings = {
   terms: 'Payment due within 7 days of invoice date.',
   invoiceDay: 1,
   autoEmail: true,
+  ccEmails: '',
 };
 
-// Dummy Data Generator
 const generateDummyData = () => {
   const clients: Client[] = [
     { id: 'c1', name: 'Hemu', contact: '9876543210', email: 'hemu@example.com', address: 'Plot 4, Ind. Area', invoiceFrequency: '15-Days' },
-    { id: 'c2', name: 'Ravi', contact: '9876543211', email: 'ravi@example.com', address: 'Shop 12, Main Market', invoiceFrequency: 'Monthly' },
+    { id: 'c2', name: 'Ravi', contact: '9876543211', email: 'ravi@example.com', address: 'Shop 12, Main Market', invoiceFrequency: 'Monthly', customPricing: { '30000L': 700 } },
     { id: 'c3', name: 'Shiv', contact: '9876543212', email: 'shiv@example.com', address: 'Sector 9, Housing Soc.', invoiceFrequency: 'Monthly' },
   ];
 
@@ -34,12 +34,10 @@ const generateDummyData = () => {
   ];
 
   const entries: TankerEntry[] = [];
-  // Generate entries for last 45 days to show history
   [...Array(45)].forEach((_, i) => {
     const daysAgo = 44 - i;
     const date = subDays(new Date(), daysAgo);
     
-    // Random entries
     if (Math.random() > 0.5) {
       entries.push({
         id: generateId(),
@@ -56,7 +54,7 @@ const generateDummyData = () => {
         clientId: 'c2',
         driverId: 'd3',
         type: '30000L',
-        price: 750,
+        price: 700,
         date: new Date(date.setHours(14, 30)).toISOString()
       });
     }
@@ -72,7 +70,7 @@ export const useStore = create<AppState>()(
       drivers: [],
       entries: [],
       payments: [],
-      pricing: initialPricing,
+      tankerSizes: initialTankerSizes,
       invoiceSettings: initialInvoiceSettings,
       lastAutoInvoiceDate: null,
 
@@ -96,19 +94,29 @@ export const useStore = create<AppState>()(
 
       addEntry: (entry) => set((state) => ({ entries: [entry, ...state.entries] })),
       addBulkEntries: (newEntries) => set((state) => ({ entries: [...newEntries, ...state.entries] })),
-      
       deleteEntry: (id) => set((state) => ({ entries: state.entries.filter((e) => e.id !== id) })),
 
       addPayment: (payment) => set((state) => ({ payments: [payment, ...state.payments] })),
       deletePayment: (id) => set((state) => ({ payments: state.payments.filter((p) => p.id !== id) })),
 
-      updatePricing: (pricing) => set(() => ({ pricing })),
-      
+      addTankerSize: (size) => set((state) => ({ tankerSizes: [...state.tankerSizes, size] })),
+      updateTankerSize: (id, size) => set((state) => ({
+        tankerSizes: state.tankerSizes.map(s => s.id === id ? { ...s, ...size } : s)
+      })),
+      deleteTankerSize: (id) => set((state) => ({
+        tankerSizes: state.tankerSizes.filter(s => s.id !== id)
+      })),
+
       updateInvoiceSettings: (settings) => set(() => ({ invoiceSettings: settings })),
       setLastAutoInvoiceDate: (date) => set(() => ({ lastAutoInvoiceDate: date })),
 
       initializeDummyData: () => {
         const state = get();
+        // Migration for existing users who might not have tankerSizes
+        if (!state.tankerSizes || state.tankerSizes.length === 0) {
+           set({ tankerSizes: initialTankerSizes });
+        }
+        
         if (state.clients.length === 0) {
           const dummy = generateDummyData();
           set({
