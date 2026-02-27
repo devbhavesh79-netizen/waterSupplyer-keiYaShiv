@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import { useEffect } from 'react';
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import { Layout } from './components/Layout';
 import { Dashboard } from './pages/Dashboard';
@@ -10,12 +10,19 @@ import { Settings } from './pages/Settings';
 import { useStore } from './store/useStore';
 
 function App() {
-  const { initializeDummyData } = useStore();
+  const { loadData, isLoading } = useStore();
 
   useEffect(() => {
-    // Initialize dummy data on first load if store is empty
-    initializeDummyData();
-  }, [initializeDummyData]);
+    loadData();
+  }, [loadData]);
+
+  if (isLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-50">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-600"></div>
+      </div>
+    );
+  }
 
   return (
     <BrowserRouter>

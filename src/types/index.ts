@@ -85,4 +85,7 @@ export interface AppState {
   updateInvoiceSettings: (settings: InvoiceSettings) => void;
   setLastAutoInvoiceDate: (date: string) => void;
   initializeDummyData: () => void;
+  loadData: () => Promise<void>;
+  isLoading: boolean;
+  error: string | null;
 }
