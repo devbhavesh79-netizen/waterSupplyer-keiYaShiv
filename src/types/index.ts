@@ -62,6 +62,7 @@ export interface AppState {
   tankerSizes: TankerSize[];
   invoiceSettings: InvoiceSettings;
   lastAutoInvoiceDate: string | null;
+  isLocalMode: boolean; // Added to track connection status
 
   addClient: (client: Client) => void;
   updateClient: (id: string, data: Partial<Client>) => void;

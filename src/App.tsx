@@ -11,7 +11,7 @@ import { useStore } from './store/useStore';
 import { X } from 'lucide-react';
 
 function App() {
-  const { loadData, isLoading, error, clearError } = useStore();
+  const { loadData, isLoading, error, clearError, isLocalMode } = useStore();
 
   useEffect(() => {
     loadData();
@@ -27,15 +27,15 @@ function App() {
 
   return (
     <BrowserRouter>
-      {/* Error Banner to show database connection issues */}
+      {/* Dynamic Banner: Shows Yellow for Offline Mode, Red for other errors */}
       {error && (
-        <div className="bg-red-500 text-white px-4 py-3 text-sm font-medium shadow-sm z-50 relative flex justify-between items-center">
+        <div className={`${isLocalMode ? 'bg-yellow-500' : 'bg-red-500'} text-white px-4 py-3 text-sm font-medium shadow-sm z-50 relative flex justify-between items-center`}>
           <div className="flex-1 text-center">
-            Database Sync Error: {error}
+            {error}
           </div>
           <button 
             onClick={clearError} 
-            className="p-1 hover:bg-red-600 rounded-lg transition-colors ml-4"
+            className="p-1 hover:bg-black/10 rounded-lg transition-colors ml-4"
             title="Dismiss"
           >
             <X className="w-4 h-4" />

@@ -39,6 +39,29 @@ const toCamelCase = (obj: any) => {
   return newObj;
 };
 
+// Local Storage Helpers for Offline Fallback
+const getLocalData = () => {
+  try {
+    const data = localStorage.getItem('keiyashiv_local_db');
+    return data ? JSON.parse(data) : null;
+  } catch { return null; }
+};
+
+const setLocalData = (state: any) => {
+  try {
+    const dataToSave = {
+      clients: state.clients,
+      drivers: state.drivers,
+      entries: state.entries,
+      payments: state.payments,
+      tankerSizes: state.tankerSizes,
+      invoiceSettings: state.invoiceSettings,
+      lastAutoInvoiceDate: state.lastAutoInvoiceDate
+    };
+    localStorage.setItem('keiyashiv_local_db', JSON.stringify(dataToSave));
+  } catch (e) { console.error("Local storage error", e); }
+};
+
 export const useStore = create<AppState>()((set, get) => ({
   clients: [],
   drivers: [],
@@ -49,12 +72,20 @@ export const useStore = create<AppState>()((set, get) => ({
   lastAutoInvoiceDate: null,
   isLoading: false,
   error: null,
+  isLocalMode: false,
 
   clearError: () => set({ error: null }),
 
   loadData: async () => {
     set({ isLoading: true, error: null });
     try {
+      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+      
+      // Check if Supabase is properly configured
+      if (!supabaseUrl || supabaseUrl.includes('your-project-url') || supabaseUrl === 'https://.supabase.co') {
+         throw new Error('Supabase not configured or disconnected');
+      }
+
       const [
         { data: clients, error: errClients },
         { data: drivers, error: errDrivers },
@@ -71,20 +102,12 @@ export const useStore = create<AppState>()((set, get) => ({
         supabase.from('invoice_settings').select('*').eq('id', 1).single(),
       ]);
 
-      // Log any potential fetch errors to the browser console
-      if (errClients) console.error('Clients fetch error:', errClients);
-      if (errDrivers) console.error('Drivers fetch error:', errDrivers);
-      if (errEntries) console.error('Entries fetch error:', errEntries);
-      if (errPayments) console.error('Payments fetch error:', errPayments);
-      if (errSizes) console.error('Sizes fetch error:', errSizes);
-      if (errSettings && errSettings.code !== 'PGRST116') console.error('Settings fetch error:', errSettings);
-
       // Intercept network/env variable fetch failures
       const fetchError = [errClients, errDrivers, errEntries, errPayments, errSizes, errSettings]
         .find(e => e?.message?.includes('Failed to fetch'));
         
       if (fetchError) {
-        throw new Error('Database connection failed. Please ensure your .env file is configured and restart the Vite development server.');
+        throw new Error('Database connection failed');
       }
 
       const parsedSettings = settings ? toCamelCase(settings) : initialInvoiceSettings;
@@ -98,100 +121,195 @@ export const useStore = create<AppState>()((set, get) => ({
         invoiceSettings: { ...initialInvoiceSettings, ...parsedSettings },
         lastAutoInvoiceDate: parsedSettings.lastAutoInvoiceDate || null,
         isLoading: false,
+        isLocalMode: false,
+        error: null
       });
     } catch (err: any) {
-      console.error("Load Data Error:", err);
-      set({ error: err.message, isLoading: false });
+      console.warn("Switching to Offline Local Mode:", err.message);
+      // Fallback to Local Storage automatically
+      const localData = getLocalData();
+      if (localData) {
+        set({ 
+          ...localData, 
+          isLocalMode: true, 
+          isLoading: false, 
+          error: null // Silently fallback without showing error banner
+        });
+      } else {
+        set({ 
+          isLocalMode: true, 
+          isLoading: false, 
+          error: null // Silently fallback without showing error banner
+        });
+      }
     }
   },
 
+  // --- CRUD OPERATIONS WITH OFFLINE FALLBACK ---
+
   addClient: async (client) => {
+    if (get().isLocalMode) {
+      const newClients = [...get().clients, client];
+      set({ clients: newClients });
+      setLocalData(get());
+      return;
+    }
     const { error } = await supabase.from('clients').insert([toSnakeCase(client)]);
-    if (error) { console.error('addClient error:', error); set({ error: error.message }); }
-    else get().loadData();
+    if (error) { set({ error: error.message }); } else get().loadData();
   },
   updateClient: async (id, data) => {
+    if (get().isLocalMode) {
+      const newClients = get().clients.map(c => c.id === id ? { ...c, ...data } : c);
+      set({ clients: newClients });
+      setLocalData(get());
+      return;
+    }
     const { error } = await supabase.from('clients').update(toSnakeCase(data)).eq('id', id);
-    if (error) { console.error('updateClient error:', error); set({ error: error.message }); }
-    else get().loadData();
+    if (error) { set({ error: error.message }); } else get().loadData();
   },
   deleteClient: async (id) => {
+    if (get().isLocalMode) {
+      const newClients = get().clients.filter(c => c.id !== id);
+      set({ clients: newClients });
+      setLocalData(get());
+      return;
+    }
     const { error } = await supabase.from('clients').delete().eq('id', id);
-    if (error) { console.error('deleteClient error:', error); set({ error: error.message }); }
-    else get().loadData();
+    if (error) { set({ error: error.message }); } else get().loadData();
   },
 
   addDriver: async (driver) => {
+    if (get().isLocalMode) {
+      const newDrivers = [...get().drivers, driver];
+      set({ drivers: newDrivers });
+      setLocalData(get());
+      return;
+    }
     const { error } = await supabase.from('drivers').insert([toSnakeCase(driver)]);
-    if (error) { console.error('addDriver error:', error); set({ error: error.message }); }
-    else get().loadData();
+    if (error) { set({ error: error.message }); } else get().loadData();
   },
   updateDriver: async (id, data) => {
+    if (get().isLocalMode) {
+      const newDrivers = get().drivers.map(d => d.id === id ? { ...d, ...data } : d);
+      set({ drivers: newDrivers });
+      setLocalData(get());
+      return;
+    }
     const { error } = await supabase.from('drivers').update(toSnakeCase(data)).eq('id', id);
-    if (error) { console.error('updateDriver error:', error); set({ error: error.message }); }
-    else get().loadData();
+    if (error) { set({ error: error.message }); } else get().loadData();
   },
   deleteDriver: async (id) => {
+    if (get().isLocalMode) {
+      const newDrivers = get().drivers.filter(d => d.id !== id);
+      set({ drivers: newDrivers });
+      setLocalData(get());
+      return;
+    }
     const { error } = await supabase.from('drivers').delete().eq('id', id);
-    if (error) { console.error('deleteDriver error:', error); set({ error: error.message }); }
-    else get().loadData();
+    if (error) { set({ error: error.message }); } else get().loadData();
   },
 
   addEntry: async (entry) => {
+    if (get().isLocalMode) {
+      const newEntries = [entry, ...get().entries];
+      set({ entries: newEntries });
+      setLocalData(get());
+      return;
+    }
     const { error } = await supabase.from('entries').insert([toSnakeCase(entry)]);
-    if (error) { console.error('addEntry error:', error); set({ error: error.message }); }
-    else get().loadData();
+    if (error) { set({ error: error.message }); } else get().loadData();
   },
   addBulkEntries: async (newEntries) => {
+    if (get().isLocalMode) {
+      const updatedEntries = [...newEntries, ...get().entries];
+      set({ entries: updatedEntries });
+      setLocalData(get());
+      return;
+    }
     const { error } = await supabase.from('entries').insert(newEntries.map(toSnakeCase));
-    if (error) { console.error('addBulkEntries error:', error); set({ error: error.message }); }
-    else get().loadData();
+    if (error) { set({ error: error.message }); } else get().loadData();
   },
   deleteEntry: async (id) => {
+    if (get().isLocalMode) {
+      const newEntries = get().entries.filter(e => e.id !== id);
+      set({ entries: newEntries });
+      setLocalData(get());
+      return;
+    }
     const { error } = await supabase.from('entries').delete().eq('id', id);
-    if (error) { console.error('deleteEntry error:', error); set({ error: error.message }); }
-    else get().loadData();
+    if (error) { set({ error: error.message }); } else get().loadData();
   },
 
   addPayment: async (payment) => {
+    if (get().isLocalMode) {
+      const newPayments = [payment, ...get().payments];
+      set({ payments: newPayments });
+      setLocalData(get());
+      return;
+    }
     const { error } = await supabase.from('payments').insert([toSnakeCase(payment)]);
-    if (error) { console.error('addPayment error:', error); set({ error: error.message }); }
-    else get().loadData();
+    if (error) { set({ error: error.message }); } else get().loadData();
   },
   deletePayment: async (id) => {
+    if (get().isLocalMode) {
+      const newPayments = get().payments.filter(p => p.id !== id);
+      set({ payments: newPayments });
+      setLocalData(get());
+      return;
+    }
     const { error } = await supabase.from('payments').delete().eq('id', id);
-    if (error) { console.error('deletePayment error:', error); set({ error: error.message }); }
-    else get().loadData();
+    if (error) { set({ error: error.message }); } else get().loadData();
   },
 
   addTankerSize: async (size) => {
+    if (get().isLocalMode) {
+      const newSizes = [...get().tankerSizes, size];
+      set({ tankerSizes: newSizes });
+      setLocalData(get());
+      return;
+    }
     const { error } = await supabase.from('tanker_sizes').insert([toSnakeCase(size)]);
-    if (error) { console.error('addTankerSize error:', error); set({ error: error.message }); }
-    else get().loadData();
+    if (error) { set({ error: error.message }); } else get().loadData();
   },
   updateTankerSize: async (id, size) => {
+    if (get().isLocalMode) {
+      const newSizes = get().tankerSizes.map(s => s.id === id ? { ...s, ...size } : s);
+      set({ tankerSizes: newSizes });
+      setLocalData(get());
+      return;
+    }
     const { error } = await supabase.from('tanker_sizes').update(toSnakeCase(size)).eq('id', id);
-    if (error) { console.error('updateTankerSize error:', error); set({ error: error.message }); }
-    else get().loadData();
+    if (error) { set({ error: error.message }); } else get().loadData();
   },
   deleteTankerSize: async (id) => {
+    if (get().isLocalMode) {
+      const newSizes = get().tankerSizes.filter(s => s.id !== id);
+      set({ tankerSizes: newSizes });
+      setLocalData(get());
+      return;
+    }
     const { error } = await supabase.from('tanker_sizes').delete().eq('id', id);
-    if (error) { console.error('deleteTankerSize error:', error); set({ error: error.message }); }
-    else get().loadData();
+    if (error) { set({ error: error.message }); } else get().loadData();
   },
 
   updateInvoiceSettings: async (settings) => {
+    if (get().isLocalMode) {
+      set({ invoiceSettings: { ...get().invoiceSettings, ...settings } });
+      setLocalData(get());
+      return;
+    }
     const { error } = await supabase.from('invoice_settings').upsert({ id: 1, ...toSnakeCase(settings) });
-    if (error) { console.error('updateInvoiceSettings error:', error); set({ error: error.message }); }
-    else get().loadData();
+    if (error) { set({ error: error.message }); } else get().loadData();
   },
   setLastAutoInvoiceDate: async (date) => {
+    if (get().isLocalMode) {
+      set({ lastAutoInvoiceDate: date });
+      setLocalData(get());
+      return;
+    }
     const { error } = await supabase.from('invoice_settings').upsert({ id: 1, last_auto_invoice_date: date });
-    if (error) { console.error('setLastAutoInvoiceDate error:', error); set({ error: error.message }); }
-    else get().loadData();
+    if (error) { set({ error: error.message }); } else get().loadData();
   },
 
-  initializeDummyData: () => {
-    // No-op for Supabase version
-  }
+  initializeDummyData: () => {}
 }));

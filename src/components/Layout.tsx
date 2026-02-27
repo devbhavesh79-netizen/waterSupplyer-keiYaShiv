@@ -1,8 +1,9 @@
 import React from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { LayoutDashboard, Users, Truck, FileText, CreditCard, Settings, Waves } from 'lucide-react';
+import { LayoutDashboard, Users, Truck, FileText, CreditCard, Settings, Waves, Cloud, Database } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { AutoInvoiceManager } from './AutoInvoiceManager';
+import { useStore } from '../store/useStore';
 
 const navItems = [
   { icon: LayoutDashboard, label: 'Dashboard', path: '/' },
@@ -15,6 +16,7 @@ const navItems = [
 
 export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const location = useLocation();
+  const { isLocalMode } = useStore();
 
   return (
     <div className="flex h-screen bg-gray-50">
@@ -53,10 +55,24 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
           })}
         </nav>
 
+        {/* Dynamic System Status Indicator */}
         <div className="p-4 border-t border-gray-100">
-          <div className="bg-blue-50 rounded-lg p-4">
-            <p className="text-xs text-blue-600 font-medium">System Status</p>
-            <p className="text-xs text-blue-500 mt-1">Frontend Mode (Local Storage)</p>
+          <div className={cn("rounded-lg p-4 flex items-start gap-3", isLocalMode ? "bg-yellow-50" : "bg-blue-50")}>
+            {isLocalMode ? (
+              <Database className="w-5 h-5 text-yellow-600 mt-0.5 shrink-0" />
+            ) : (
+              <Cloud className="w-5 h-5 text-blue-600 mt-0.5 shrink-0" />
+            )}
+            <div>
+              <p className={cn("text-xs font-bold", isLocalMode ? "text-yellow-700" : "text-blue-700")}>
+                System Status
+              </p>
+              <p className={cn("text-xs mt-1 leading-relaxed", isLocalMode ? "text-yellow-600" : "text-blue-600")}>
+                {isLocalMode 
+                  ? "Offline Mode. Data is saved to your browser's local storage." 
+                  : "Online Mode. Data is synced securely to the cloud."}
+              </p>
+            </div>
           </div>
         </div>
       </aside>
@@ -70,6 +86,10 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
             <span className="font-extrabold bg-clip-text text-transparent bg-gradient-to-r from-blue-700 to-cyan-600 tracking-tight text-lg">
               KeiYaShiv
             </span>
+         </div>
+         {/* Mobile Status Indicator */}
+         <div className={cn("p-1.5 rounded-full", isLocalMode ? "bg-yellow-100" : "bg-blue-100")}>
+           {isLocalMode ? <Database className="w-4 h-4 text-yellow-600" /> : <Cloud className="w-4 h-4 text-blue-600" />}
          </div>
       </div>
 
