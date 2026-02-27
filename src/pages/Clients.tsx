@@ -9,10 +9,10 @@ import { zodResolver } from '@hookform/resolvers/zod';
 const clientSchema = z.object({
   name: z.string().min(1, 'Name is required'),
   contact: z.string().min(10, 'Valid contact number required'),
-  email: z.string().email().optional().or(z.literal('')),
+  email: z.union([z.string().email(), z.literal('')]).optional(),
   address: z.string().optional(),
   invoiceFrequency: z.enum(['Monthly', '15-Days', 'Weekly']),
-  customPricing: z.record(z.any()).optional()
+  customPricing: z.record(z.string(), z.unknown()).optional()
 });
 
 const driverSchema = z.object({
@@ -167,7 +167,7 @@ export const Clients = () => {
                       <IndianRupee className="w-3 h-3 mt-0.5" />
                       <div className="flex flex-wrap gap-x-3 gap-y-1">
                         {Object.entries(client.customPricing).map(([size, price]) => (
-                          <span key={size} className="font-medium">{size}: Rs. {price}</span>
+                          <span key={size} className="font-medium">{size}: Rs. {price as number}</span>
                         ))}
                       </div>
                    </div>

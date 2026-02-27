@@ -88,4 +88,5 @@ export interface AppState {
   loadData: () => Promise<void>;
   isLoading: boolean;
   error: string | null;
+  clearError: () => void;
 }

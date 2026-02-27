@@ -50,6 +50,8 @@ export const useStore = create<AppState>()((set, get) => ({
   isLoading: false,
   error: null,
 
+  clearError: () => set({ error: null }),
+
   loadData: async () => {
     set({ isLoading: true, error: null });
     try {
@@ -76,6 +78,14 @@ export const useStore = create<AppState>()((set, get) => ({
       if (errPayments) console.error('Payments fetch error:', errPayments);
       if (errSizes) console.error('Sizes fetch error:', errSizes);
       if (errSettings && errSettings.code !== 'PGRST116') console.error('Settings fetch error:', errSettings);
+
+      // Intercept network/env variable fetch failures
+      const fetchError = [errClients, errDrivers, errEntries, errPayments, errSizes, errSettings]
+        .find(e => e?.message?.includes('Failed to fetch'));
+        
+      if (fetchError) {
+        throw new Error('Database connection failed. Please ensure your .env file is configured and restart the Vite development server.');
+      }
 
       const parsedSettings = settings ? toCamelCase(settings) : initialInvoiceSettings;
 
@@ -171,7 +181,6 @@ export const useStore = create<AppState>()((set, get) => ({
   },
 
   updateInvoiceSettings: async (settings) => {
-    // Upsert ensures it updates if exists, or inserts if missing
     const { error } = await supabase.from('invoice_settings').upsert({ id: 1, ...toSnakeCase(settings) });
     if (error) { console.error('updateInvoiceSettings error:', error); set({ error: error.message }); }
     else get().loadData();
