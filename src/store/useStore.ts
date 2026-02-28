@@ -79,8 +79,7 @@ export const useStore = create<AppState>()((set, get) => ({
   loadData: async () => {
     set({ isLoading: true, error: null });
     try {
-      // Added fallback for Netlify live deployment
-      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || 'https://hvusjdiaghasingtnawk.supabase.co';
+      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
       
       // Check if Supabase is properly configured
       if (!supabaseUrl || supabaseUrl.includes('your-project-url') || supabaseUrl === 'https://.supabase.co') {
